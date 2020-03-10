@@ -1,0 +1,329 @@
+---
+title: "PdM-Model"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+install.packages("caret")
+library(caret)
+install.packages("e1071")
+library(e1071)
+
+```
+
+```{r}
+dataset_train <- read.table("PM_train.txt", header=FALSE)
+
+dataset_train
+
+str(dataset_train)
+```
+
+```{r}
+dataset_train <- dataset_train %>% rename(id=V1,cycle=V2,setting1=V3,setting2=V4,setting3=V5,s1=V6,s2=V7,s3=V8,s4=V9,s5=V10,s6=V11,s7=V12,s8=V13,s9=V14,s10=V15,s11=V16,s12=V17,s13=V18,s14=V19,s15=V20,s16=V21,s17=V22,s18=V23,s19=V24,s20=V25,s21=V26)
+
+head(dataset_train)
+```
+
+```{r}
+dataset_test <- read.table("PM_test.txt", header=FALSE)
+
+head(dataset_test)
+```
+
+```{r}
+dataset_test <- dataset_test %>% rename(id=V1,cycle=V2,setting1=V3,setting2=V4,setting3=V5,s1=V6,s2=V7,s3=V8,s4=V9,s5=V10,s6=V11,s7=V12,s8=V13,s9=V14,s10=V15,s11=V16,s12=V17,s13=V18,s14=V19,s15=V20,s16=V21,s17=V22,s18=V23,s19=V24,s20=V25,s21=V26)
+
+dataset_test
+```
+
+
+```{r}
+pm_truth <- read.table("PM_truth.txt", header=FALSE)
+head(pm_truth)
+
+pm_truth <- pm_truth %>% rename(more=V1) %>% rowid_to_column("ID")
+pm_truth
+```
+
+#generate column max for test data
+
+```{r}
+rul <- dataset_test %>% group_by(id) %>% summarize(max=max(cycle))
+
+rul
+```
+
+
+# run to failure
+
+```{r}
+pm_truth <- pm_truth %>% mutate(rtf = more + rul$max)
+
+pm_truth
+```
+
+```{r}
+pm_truth <- pm_truth %>% select(-more)
+
+dataset_test <- dataset_test %>% left_join(pm_truth,by=c("id" = "ID"))
+
+dataset_test <- dataset_test %>% mutate(ttf = rtf - cycle)
+
+dataset_test <- dataset_test %>% select(-rtf)
+
+head(dataset_test)
+
+
+```
+
+```{r}
+dataset_train
+```
+
+
+```{r}
+dataset_train <- dataset_train %>% group_by(id) %>% mutate(ttf = max(cycle) - cycle)
+
+dataset_train
+```
+
+
+```{r}
+df_train <- dataset_train
+df_test <- dataset_test
+period <- 30
+
+label <- function(row){
+  if (row["ttf"] <= period) {
+    return(1)
+  } else {
+    return(0)
+  }
+}
+
+df_train["label_bc"] <- apply(df_train, 1, label)
+
+df_test["label_bc"] <- apply(df_test, 1, label)
+```
+
+```{r}
+features_col_name <-c("setting1","setting2","setting3","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","s12","s13","s14","s15","s16","s17","s18","s19","s20","s21")
+
+target_col_names <- "label_bc"
+```
+
+
+
+```{r}
+#Min-Max Scaling Function
+
+ normalize2 <- function(x) {
+  if(min(x, na.rm=TRUE)!=max(x, na.rm=TRUE)) {
+    res <- ((x - min(x, na.rm=TRUE)) / (max(x, na.rm=TRUE) - min(x, na.rm=TRUE)))
+  } else {
+    res <- 0.5
+  }
+  res
+}
+
+# MinMaxScaling <- function(x){
+#   return((x-min(x))/(max(x)-min(x)))
+# }
+
+
+df_train <- as.data.frame(lapply(df_train[features_col_name], normalize2))
+df_test <- as.data.frame(lapply(df_test[features_col_name], normalize2))
+
+
+
+ # normalize <- function(x) {
+ #   return(ifelse(min(x)<max(x),(x - min(x)) / (max(x) - min(x))))
+ # }
+ # 
+ # normalize1 <- function(x) { 
+ # z=x
+ # if(min(x)<max(x)){ 
+ #  z=(x - min(x)) / (max(x) - min(x))
+ # }
+ # return(z)
+ # }  
+ 
+df_train
+df_test
+ 
+
+```
+
+# Probability of breakdown using classification method
+
+```{r}
+df_train_c <- dataset_train
+
+df_train_labelbc <- dataset_train
+
+df_train_labelbc["label_bc"] <- apply(df_train_labelbc, 1, label)
+
+df_train_labelbc <- df_train_labelbc %>% select(label_bc)
+
+
+df_train_c <- as.data.frame(lapply(df_train_c[features_col_name], normalize2))
+
+# df_train_c["label_bc"] <- apply(df_train_c, 1, label)
+# 
+# df_train_c
+df_train
+
+df_train_binds <- bind_cols(df_train,df_train_labelbc)
+df_train_binds <- df_train_binds %>% select(-id)
+
+```
+
+
+```{r}
+# corrmat <- cor(df_train_binds)
+
+df_train_binds_x <- df_train_binds %>% select(-label_bc)
+df_train_binds_y <- df_train_binds %>% select(label_bc)
+```
+
+# Light GBM Implemented
+
+```{r}
+install.packages("randomForest")
+library(randomForest)
+```
+
+
+```{r}
+output_forest <- randomForest(label_bc ~ ., data = df_train_binds)
+
+df_train_binds
+```
+
+
+```{r}
+model <- glm(label_bc ~ ., family=binomial(link="logit"),data=df_train_binds)
+
+summary(model)
+```
+
+```{r}
+df_test_labelbc <- dataset_test
+
+df_test_labelbc["label_bc"] <- apply(df_test_labelbc, 1, label)
+
+df_test_labelbc <- df_test_labelbc %>% select(label_bc)
+
+
+df_test_binds <- bind_cols(df_test,df_test_labelbc)
+```
+
+
+
+
+```{r}
+library(ROCR)
+p <- predict(model, newdata=subset(df_test_binds, type="response"))
+pr <- prediction(p, df_test_binds$label_bc)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+```
+
+```{r}
+install.packages("gbm")
+
+library(gbm)
+```
+
+```{r}
+df_train_binds
+
+model_gbm <- gbm(formula = label_bc ~ ., distribution = "bernoulli", data = df_train_binds, n.trees = 5000)
+
+summary(model_gbm)
+```
+
+#GBM modeling
+
+```{r}
+predictions_gbm <- predict(object = model_gbm, newdata = df_test_binds, n.trees = 5000, type="response")
+
+prediction_binaries <- as.factor(ifelse(predictions_gbm>0.7,1,0))
+df_test_binds$label_bc <- as.factor(df_test_binds$label_bc)
+confusionMatrix(prediction_binaries,df_test_binds$label_bc)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
